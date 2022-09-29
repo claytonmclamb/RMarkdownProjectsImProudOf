@@ -1,0 +1,509 @@
+---
+title: "Analyzing the Differences in Cancer Rates Between US Regions"
+author: Clayton McLamb
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    collapsed: false
+    toc_depth: 2
+    number_sections: false
+    theme: cerulean
+---
+<body style="background-color:snowwhite;">
+---
+
+# **Packages Used Throughout**
+
+```{r, message = FALSE, warning = FALSE}
+# Allows us to read in data
+library(ipumsr)
+# Allows us to wrangle data
+library(dplyr)
+# Allows us to conduct hypothesis tests and confidence intervals
+library(infer)
+# Allows us to make graphs in an easy way
+library(ggplot2)
+# Allows us to make a carousel of Images 
+library(bsplus)
+# Allows us to create fancy tables
+library(kableExtra)
+# Setting our seed for consistency
+set.seed(091273)
+```
+
+
+
+# **Introduction**
+
+---
+
+## <span style="color: black;">Question of Interest</span>
+
+In this project, I will be exploring the question of **whether or not there is actually a difference in the proportion of residents who have been diagnosed with cancer across US regions.** Because of the nature of the question, our population of interest throughout this project will be the proportion of people in each region who have been told they have cancer or not.
+
+I would like to explore this question for two main reasons:
+
+1. If there is a difference in cancer rates between regions, that may lead us to explore why a certain region has a lower or higher cancer rate.
+
+2. If there is no difference found in cancer rates between regions, that may lead to the rejection of often harmful and stereotypical behavior revolving around cancer, such as "the south having so much cancer" or "the west having such little cancer."
+
+---
+
+## <span style="color: black;">Variables of Interest</span>
+
+In this study, we will be using the health data set, which was a random sample of 30,000+ US residents done in 2020. 
+
+```{r, message = FALSE}
+#Loading Data Set
+ddi <- read_ipums_ddi("nhis_00003.xml")
+proj2 <- read_ipums_micro(ddi)
+```
+
+In order to successfully answer our question of whether or not there is a difference between cancer rates across different regions of the United States, we will be choosing the CANCEREV and REGION variable in the health data set. Below I have detailed the variables and identified the levels of each variable.
+
+
+- CANCEREV: A categorical variable that identifies whether people have ever been diagnosed with cancer. There are 6 levels in this variable: 0 (NIU), 1 (No), 2 (Yes), 7 (Unknown-refused), 8 (Unknown-not ascertained), 9 (Unknown-don't know).
+
+- REGION: A categorical variable that identifies what region of the US the observation lived in. There are also 6 levels in this variable: 1 (Northeast), 2 (North Central/Midwest), 3 (South), 4 (West), 8 (NO DATA IN ROUND), 9 (Unknown)
+
+```{r}
+#Selecting our Variables of Interest
+proj2 <- select(proj2, CANCEREV, REGION)
+```
+
+Many of the variables, such as 9 (Unknown-don't know) of CANCEREV, don't allow us to explore our question of interest and interfere with our data analysis. For this reason, levels 7, 8, 9, and 0 of CANCEREV will be filtered out, and levels 8 and 9 of REGION will be filtered out. However, **there will be a discussion around how the exclusion of these variables could skew our data in the conclusion of this paper**
+
+
+```{r}
+# Filtering out the Data of no interest
+proj2 <- filter(proj2,
+                CANCEREV != 7,
+                CANCEREV != 8,
+                CANCEREV != 9,
+                CANCEREV != 0,
+                REGION != 8,
+                REGION != 9)
+```
+
+The current state of the data set is hard to follow and difficult to manage. Because of this I will be renaming the variables and their levels, such as renaming level 1 in CANCEREV to "No" in a new variable simply called "cancer."
+
+
+```{r}
+#Renaming Variables
+new_data <- proj2 %>%
+  mutate(cancer = case_when(CANCEREV == 1 ~ "no",
+                            CANCEREV == 2 ~ "yes"))%>%
+  mutate(region = case_when(REGION == 1 ~ "northeast",
+                            REGION == 2 ~ "midwest",
+                            REGION == 3 ~ "south",
+                            REGION == 4 ~ "west"))
+```
+
+In order to fully understand our data set, we must also look at the number of observations and sample size of each level, as seen below:
+
+```{r, echo = FALSE}
+total <- count(new_data)
+
+counts <- new_data %>%
+  group_by(region)%>%
+  count()
+
+mw <- counts[1,2]
+ne <- counts[2,2]
+s <- counts[3,2]
+w <- counts[4,2]
+
+counts2 <- new_data %>%
+  group_by(cancer)%>%
+  count()
+
+no <- counts2[1,2]
+yes <- counts2[2,2]  
+
+d_set_cancer <- data.frame(variable = c("Total",
+                                        "No",
+                                        "Yes",
+                                        "Northeast",
+                                        "Midwest",
+                                        "South",
+                                        "West"),
+                           counts = c(total$n,
+                                      no$n,
+                                      yes$n,
+                                      ne$n,
+                                      mw$n,
+                                      s$n,
+                                      w$n))      
+
+
+kbl(d_set_cancer) %>%
+  kable_paper(full_width = F) %>%
+  column_spec(1, bold = T, border_right = T) %>%
+  column_spec(2, width = "10em", background = "lightblue")
+```
+
+
+---
+
+# **Conducting a Hypothesis Test**
+
+Our question involves two categorical variables, with multiple levels in each variable. Our question also pertains to whether or not the data sampled can sufficiently say that the proportion of residents who have been diagnosed with cancer is independent of the region the reside in. Because of this, a chi-square test must be performed.
+
+---
+
+## <span style="color: black;">Setting Up Our Hypotheses</span>
+
+For further investigation into our question of interest, we will begin by defining our hypotheses. 
+
+$H_0:$ There is no relationship between the categorical variables of being diagnosed with cancer or not and what region of the US someone lives in; *The two categorical variables are **independent** of one another*
+
+$H_a:$ There is some sort of relationship between the categorical variables of being diagnosed with cancer or not and what region of the US someone lives in; *They are **not independent** of one another*
+
+---
+
+## <span style="color: black;">Summarizing Our Data of Interest</span>
+
+The easiest way to summarize the difference in proportions of those diagnosed with cancer across United States regions would be a bar chart, as seen below. 
+
+```{r, warning=FALSE}
+ggplot(new_data)+
+  geom_bar(aes(x = region, fill = cancer), position = "fill")+
+  ylim(0, 0.25)+
+  theme(plot.background = element_rect(fill = "ghostwhite"),
+        panel.background = element_rect(fill = "gray100"),
+        panel.grid = element_line(color = "azure"),
+        plot.title = element_text(color = "blue4", size = 18,
+                                  face = "bold", family = "Papyrus"),
+        axis.title = element_text(color = "blue4", size = 14),
+        axis.text = element_text(color = "blue4"),
+        axis.ticks = element_line(color = "blue4"),
+        plot.margin = margin(20, 20, 20, 20))+
+  labs(title = "Bar Graph Showing Proportion of Residents in Each Region \nWho Have Been Diagnosed With Cancer",
+       y = "Proportion of Residents Diagnosed (yes)",
+       x= "Region of the United States")
+```
+
+It appears that the proportion of those who have been diagnosed with cancer is relatively equal across United States regions. However, over a sample size of 30,000, a small difference in sample statistics can have a large impact on our p-value. Because of this, we may want to keep in mind that the western region of the United States appears to have a smaller proportion. 
+
+
+We also are able to find our test statistic to allow us to summarize our data.
+
+```{r}
+cancer_chi_sq <- new_data %>%
+  specify(formula = cancer ~ region)%>%
+  calculate(stat = "chisq")
+```
+
+Our test statistic appears to be `r cancer_chi_sq`. We would normally expect this test statistic to be around our degrees of freedom. We can calculate the degrees of freedom by subtracting one from both the number of columns and rows and multiplying the subsequent numbers together. This would result in our degrees of freedom being three. Because the test statistic we have observed is much greater than what we would normally see, we may reject the null hypothesis. However, we first must find the p-value to do that. 
+
+
+---
+
+## <span style="color: black;">Generating a Null Distribution</span>
+
+In order to see if the data we have (our sample) matches the theoretical data we should have (our null hypothesis), we must generate a distribution that would mimic the sample distribution in a world where the null hypothesis is true. We do this by shuffling, or permuting, our data around each variable, because the variables should be independent of one another. Below is code that performs this task. 
+
+```{r, warning = FALSE}
+cancer_chi_sq_dist <- new_data %>%
+  specify(formula = cancer ~ region)%>%
+  hypothesize(null = "independence")%>%
+  generate(reps = 1000, type = "permute")%>%
+  calculate(stat = "chisq")
+
+
+visualise(cancer_chi_sq_dist)+
+  shade_p_value(obs_stat = cancer_chi_sq, direction = "right")+
+  theme(plot.background = element_rect(fill = "ghostwhite"),
+        panel.background = element_rect(fill = "gray100"),
+        panel.grid = element_line(color = "azure"),
+        plot.title = element_text(color = "blue4", size = 18,
+                                  face = "bold", family = "Papyrus"),
+        axis.title = element_text(color = "blue4", size = 14),
+        axis.text = element_text(color = "blue4"),
+        axis.ticks = element_line(color = "blue4"),
+        plot.margin = margin(20, 20, 20, 20))+
+  labs(title = "Chi-square Simulation Distribution", 
+       x = "Chi-Square simulated value",
+       y = "Number of Simulations")
+```
+
+Above is hypothetical and simulated data that matches what we would see in a world where our null hypothesis is true (*where they are independent of one another*). Our observed test statistic was `r cancer_chi_sq`, which is the point along the x-axis where the red line is drawn. Because such little hypothetical data is beyond this test statistic, we may have to reject our null hypothesis. 
+
+---
+
+## <span style="color: black;">Finding and Interpreting Our P-Value</span>
+
+```{r}
+cancer_p <- get_p_value(cancer_chi_sq_dist, obs_stat = cancer_chi_sq, direction = "right")
+```
+
+P-Value: `r cancer_p`
+
+In a world where the proportion of those diagnosed with cancer is independent of the region they are in, we would see data like ours or more extreme .035% of the time. 
+
+---
+
+## <span style="color: black;">Concluding Our Hypothesis Test</span>
+
+Because our p-value of `r cancer_p` is less than the standard significance level of .05, we reject our null hypothesis that the proportion of residents diagnosed with cancer is independent of the region they live in. We instead accept our alternative hypothesis that the proportion of residents diagnosed with cancer is at least somewhat dependent of the region they live in.
+
+---
+
+# **Conducting Confidence Intervals**
+
+
+## <span style="color: black;">Reasoning Behind Constructing Confidence Intervals</span>
+
+Because our hypothesis test (chi-square) resulted in us rejecting that the variables of cancer diagnosis and rejoin are independent of one another, and instead resulted in us accepting there is somewhat of a dependence, we will want to use confidence intervals to investigate the potential dependence further. 
+
+In order to investigate the question of differing cancer rates by region, we must first identify the type of confidence interval we are constructing. We will want to do six confidence intervals to find the difference in population proportions between each region of the United States. We will want ot be 95% confident in total, meaning we will use bonferronis adjustment for each individual confidence interval.
+
+In order to do bonferronis adjustment, we will want to first find our significance level for each individual confidence interval:
+
+$a^* = (total\;significance) \div (total\;number\;of\;confidence\;intervals)$
+
+$a^* = (.05) \div (6) = .991$
+
+This will make it so that we are 95% confident in total. We will use the output from bonferronis adjustment to construct our confidence intervals later. 
+
+Before we construct our intervals or do anything else, we must create six individual datasets containing only the levels of the region variable they are examining.
+
+```{r}
+#South-West
+s_w_data <- new_data%>%
+  filter(region != "midwest", 
+         region != "northeast")
+```
+
+```{r, echo = FALSE}
+#South-Midwest
+s_mw_data <- new_data%>%
+  filter(region != "west", 
+         region != "northeast")
+#South-Northeast
+s_ne_data <- new_data%>%
+  filter(region != "midwest", 
+         region != "west")
+#West-Midwest
+w_mw_data <- new_data%>%
+  filter(region != "south", 
+         region != "northeast")
+#West-Northeast
+w_ne_data <- new_data%>%
+  filter(region != "midwest", 
+         region != "south")
+#Northeast-Midwest
+ne_mw_data <- new_data%>%
+  filter(region != "south", 
+         region != "west")
+```
+
+
+---
+
+
+## <span style="color: black;">Sample Estimates</span>
+
+In order to move further and construct our confidence interval, we will need to find the sample statistic, or the difference in sample proportions between each group. These will act as the center of our distributions, with our margin of error both subtracted and added to it, creating our interval.
+
+```{r}
+south_west_prop <- s_w_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("south", "west"))
+```
+
+```{r, echo = FALSE}
+south_midwest_prop <- s_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("south", "midwest"))
+
+south_northeast_prop <- s_ne_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("south", "northeast"))
+
+west_midwest_prop <- w_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("west", "midwest"))
+
+west_northeast_prop <- w_ne_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("west", "northeast"))
+
+northeast_midwest_prop <- ne_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  calculate(stat = "diff in props", order = c("northeast", "midwest"))
+
+prop_df <- data.frame(Categories = c("South Minus West",
+                               "South Minus Midwest",
+                               "South Minus Northeast",
+                               "West Minus Midwest",
+                               "West Minus Northeast",
+                               "Northeast Minus Midwest"),
+                      `Difference in Sample Proportions` = c(
+                        south_west_prop$stat,
+                        south_midwest_prop$stat,
+                        south_northeast_prop$stat,
+                        west_midwest_prop$stat,
+                        west_northeast_prop$stat,
+                        northeast_midwest_prop$stat
+                      )
+                      )
+
+kbl(prop_df) %>%
+  kable_paper(full_width = F) %>%
+  column_spec(1, bold = T, border_right = T) %>%
+  column_spec(2, width = "10em", background = "lightblue")
+```
+
+---
+
+## <span style="color: black;">Generating Our Distributions</span>
+
+In order to estimate each of the differences in the population proportion of cancer diagnosis in each United States region, we must generate a confidence interval. In this research, we will generate a bootstrap distribution to estimate our interval. A bootstrap distribution is a continuous resample from our current sample to estimate the shape of our population distribution, but the center of our bootstrap distribution will be the sample estimates (as seen above). Below is a segment of code that demonstrates the process around generating a bootstrap distribution and finding the subsequent confidence interval.  
+
+```{r}
+south_west <- s_w_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("south", "west"))
+south_west_ci <- south_west %>%
+  get_ci(level = 0.991, type = "se", point_estimate = south_west_prop)
+
+```
+
+```{r, echo = FALSE}
+south_midwest <- s_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("south", "midwest"))
+south_midwest_ci <- south_midwest %>%
+  get_ci(level = 0.991, type = "se", point_estimate = south_midwest_prop)
+
+
+south_northeast <- s_ne_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("south", "northeast"))
+south_northeast_ci <- south_northeast %>%
+  get_ci(level = 0.991, type = "se", point_estimate = south_northeast_prop)
+
+
+west_midwest <- w_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("west", "midwest"))
+west_midwest_ci <- west_midwest %>%
+  get_ci(level = 0.991, type = "se", point_estimate = west_midwest_prop)
+
+
+west_northeast <- w_ne_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("west", "northeast"))
+west_northeast_ci <- west_northeast %>%
+  get_ci(level = 0.991, type = "se", point_estimate = west_northeast_prop)
+
+
+northeast_midwest <- ne_mw_data %>%
+  specify(cancer ~ region, success = "yes")%>%
+  generate(reps = 1000, type = "bootstrap")%>%
+  calculate(stat = "diff in props", order = c("northeast", "midwest"))
+northeast_midwest_ci <- northeast_midwest %>%
+  get_ci(level = 0.991, type = "se", point_estimate = northeast_midwest_prop)
+```
+
+Below, in the carousel of images, each of our bootstrap distributions along with their confidence intervals is visualized. When examining each of the intervals, many of them contain confidence intervals that have both negative and positive values. This may lead to us concluding that no one region has higher or lower rates in cancer diagnosis, but we need to analyze the confidence intervals numerically to definitively have an answer. 
+
+```{r, echo = FALSE}
+bs_carousel(id = "confidence") %>%
+  bs_append(content = bs_carousel_image(src = "south_west.png")) %>%
+  bs_append(content = bs_carousel_image(src = "south_midwest.png")) %>%
+  bs_append(content = bs_carousel_image(src = "south_northeast.png"))%>%
+  bs_append(content = bs_carousel_image(src = "west_midwest.png"))%>%
+  bs_append(content = bs_carousel_image(src = "west_northeast.png"))%>%
+  bs_append(content = bs_carousel_image(src = "northeast_midwest.png"))
+  
+```
+
+---
+
+## <span style="color: black;">Confidence Intervals (numericallly) </span>
+
+In the previous section, we were able to find our confidence intervals and visualize them however I did not detail the process surrounding finding the confidence interval. After generating each of our bootstrap distributions, I used the standard error method for finding our confidence intervals. The standard error method first takes our sample statistic and then finds the standard error of each distribution. The standard error is the variability (standard deviation) across each of our resampled samples. The standard error allows us to, in statistical theory, estimate a percentage of the area contained within so many standard errors. In these distributions, the data took a value of the standard error that estimated the middle 99.1% of our data, which makes sense as our confidence level was .991. Below is a table that visualizes each of our confidence intervals. The rows colored represent a confidence interval that displayed a difference in population proportions, while rows colored green represent a confidence interval where no difference in population proportions was found. 
+
+
+```{r, echo = FALSE}
+cancer_df <- data.frame(CI = c("South Minus West",
+                               "South Minus Midwest",
+                               "South Minus Northeast",
+                               "West Minus Midwest",
+                               "West Minus Northeast",
+                               "Northeast Minus Midwest"),
+                        Lower = c(south_west_ci$lower_ci,
+                                  south_midwest_ci$lower_ci,
+                                  south_northeast_ci$lower_ci,
+                                  west_midwest_ci$lower_ci,
+                                  west_northeast_ci$lower_ci,
+                                  northeast_midwest_ci$lower_ci),
+                        Upper = c(south_west_ci$upper_ci,
+                                  south_midwest_ci$upper_ci,
+                                  south_northeast_ci$upper_ci,
+                                  west_midwest_ci$upper_ci,
+                                  west_northeast_ci$upper_ci,
+                                  northeast_midwest_ci$upper_ci))
+kbl(cancer_df) %>%
+  kable_paper(full_width = F) %>%
+  row_spec(1, bold = T, background = "tomato") %>%
+  row_spec(2, bold = T, background = "tomato") %>%
+  row_spec(3, bold = T, background = "tomato") %>%
+  row_spec(4, bold = T, background = "lightgreen") %>%
+  row_spec(5, bold = T, background = "tomato") %>%
+  row_spec(6, bold = T, background = "tomato")
+```
+
+---
+
+## <span style="color: black;">Interpreting Our Confidence Intervals</span>
+
+When examining our confidence intervals in the table above, one sees that only one interval showed a definitive difference in population proportions (West and Midwest). However, only one interval out of six total intervals contained a difference, meaning we cannot rank or say that one region possess a different population proportion. We may be lead to believe that the west region may have the lowest cancer rates, but we cannot be sure. So, in total, we interpret our simultaneous confidence intervals as follows:
+
+<p style="text-align: center;">*<span style="color: black;">We are 95% confident in total that no region has a different population proportion of cancer diagnosis than all of the other regions.</span>*</a></p>
+
+---
+
+# **Conclusion**
+
+---
+
+## <span style="color: black;">Summary of Results</span>
+
+In total, we can't definitively say that one region is significantly different in terms of the population proportion of those being diagnosed with cancer, even though our chi-square hypothesis test may say differently. What our chi-square hypothesis test said was that our data does not match with the data we would expect, however our p-value was not extremely low (borderline on zero), but it was still low enough too reject the null hypothesis. It was only after that we performed simultaneous confidence intervals on each of our regions that we could say we don't know if any one region possesses a different population proportion or not. 
+
+Because of what we have learned throughout this process, the harmful and stereotypical behavior around regional health should be rejected as of right now, due to us finding no evidence of a statistically significiant difference. 
+
+---
+
+## <span style="color: black;">Limitations of the Study</span>
+
+On major limitation of the study lied in the original levels of the CANCEREV variable, where it contained "unknown" variables. As said before, this would be a point of discussion in the conclusion. The problem with the unknown levels, such as "refused" or "don't know," is that they may skew our data a certain way, and we don't know how. However, we can theorize that if a confounding variable in a certain region caused people to refuse answering the question because of their diagnosis, it would skew that region to have a lower sample proportion. 
+
+---
+
+## <span style="color: black;">Future Oppurtunuties</span>
+
+The future opportunities of this study primarily revolve around expanding the region variable. Because the west coast had a lower proportion of cancer diagnosis than the Midwest region, we do know that there is some difference somewhere in the data. I suggest, in the future, that one researches each state, instead of the region. This will result in a much more definitive project, where one can then dive deeper into the factors that cause disparities in cancer diagnosis throughout the states.  
+
+
+&nbsp;
+<hr />
+<p style="text-align: center;">**<span style="color: black;">A Project by Clayton McLamb</span>**</a></p>
+<p style="text-align: center;"><span style="color: #808080;"><em>cmclamb@elon.edu</em></span></p>
+
+
+&nbsp;
+
+
+
+
+
